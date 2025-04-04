@@ -1,14 +1,17 @@
 import { Order } from '../models/order.model';
 import { PaymentService } from './payment.service';
-
+import { DiscountService } from './discount.service';
+import { OrderRepository } from '../repositories/order.repository';
 
 export class OrderService {
-  constructor(private readonly paymentService: PaymentService) {}
+  constructor(
+    private readonly paymentService: PaymentService,
+    private readonly discountService: DiscountService,
+    private readonly orderRepository: OrderRepository
+  ) {}
 
   async process(order: Partial<Order>) {
-    if (!order.items?.length) {
-      throw new Error('Order items are required');
-    }
+    if (!order.items?.length) throw new Error('Order items are required');
 
     if (order.items.some(item => item.price <= 0 || item.quantity <= 0)) {
       throw new Error('Order items are invalid');
@@ -21,33 +24,11 @@ export class OrderService {
     }
 
     if (order.couponId) {
-      const response = await fetch(`https://67eb7353aa794fb3222a4c0e.mockapi.io/coupons/${order.couponId}`)
-      const coupon = await response.json();
-
-      if (!coupon) {
-        throw new Error('Invalid coupon');
-      }
-
-      totalPrice -= coupon.discount;
-
-      if (totalPrice < 0) {
-        totalPrice = 0;
-      }
+      totalPrice = await this.discountService.applyDiscount(order.couponId, totalPrice);
     }
 
-    const orderPayload = {
-      ...order,
-      totalPrice,
-      paymentMethod: this.paymentService.buildPaymentMethod(totalPrice),
-    }
-
-    const orderResponse = await fetch('https://67eb7353aa794fb3222a4c0e.mockapi.io/order', {
-      method: 'POST',
-      body: JSON.stringify(orderPayload),
-      headers: { 'Content-Type': 'application/json' }
-    });
-
-    const createdOrder = await orderResponse.json();
+    const orderPayload = { ...order, totalPrice, paymentMethod: this.paymentService.buildPaymentMethod(totalPrice) };
+    const createdOrder = await this.orderRepository.createOrder(orderPayload);
 
     this.paymentService.payViaLink(createdOrder);
   }
